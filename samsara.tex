@@ -174,15 +174,23 @@ def dridge(data: DrmLike[Int], lambda: Double): Vector = {
 
 \subsection{Runtime \& Optimization}
 
-Execution is defered, user composes logical operators; Computational actions implicitly trigger optimization (= selection of physical plan) and execution; Optimization factors:  size of operands, orientation of operands, partitioning, sharing of computational paths; e. g.: matrix multiplication: 5 physical operators for drmA \%*\% drmB; 2 operators for drmA \%*\% inMemA; 1 operator for drm A \%*\% x; 1 operator for x \%*\% drmA; Computation of ATA in example; Naïve execution: 1st  pass: transpose A; (requires repartitioning of A); 2nd pass: multiply result with A; (expensive, potentially requires repartitioning again); Logical optimization: Optimizer rewrites plan to use; specialized logical operator for Transpose-Times-Self matrix multiplication; Samsara computes ATA via row-outer-product formulation; executes in a single pass over row-partitioned A~\cite{Schelter2012}; 
+Execution is defered, user composes logical operators; Computational actions implicitly trigger optimization (= selection of physical plan) and execution; Optimization factors:  size of operands, orientation of operands, partitioning, sharing of computational paths; e. g.: matrix multiplication: 5 physical operators for drmA \%*\% drmB; 2 operators for drmA \%*\% inMemA; 1 operator for drm A \%*\% x; 1 operator for x \%*\% drmA; Computation of ATA in example; Naïve execution: 1st  pass: transpose A; (requires repartitioning of A); 2nd pass: multiply result with A; (expensive, potentially requires repartitioning again); Logical optimization: Optimizer rewrites plan to use; 
 
-%LogicalRewrite(OpABAnyKey(OpAt(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)), OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)),OpAtA(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)))
-%LogicalRewrite(OpAx(OpAt(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)), 9),OpAtx(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0), 9))
+TODO explain Figure~\ref{fig:logicalplan}
 
+Two-phase optimization, logical and physical. Optimization per DAG associated with a pipeline (all the operators between two materializations).
 
-Two physical operators (concrete implementations) available for Transpose-Times-Self operation: standard operator AtA; operator AtA\_slim, specialized implementation for tall \& skinny matrices; Optimizer must choose; currently: depends on user-defined threshold for number of columns; ideally: cost based decision, dependent on estimates of intermediate result sizes
+\subsubsection{Logical Optimization}
 
-\begin{figure}
+In the logical optimization phase, Samsara uses pattern matching to derive rewritten plans that still produce same result, but potentially with less runtime. Samsara's optimizer is rule-based and its rewrites aim at reducing the number of passes over the input data, typically plan is compacted by merging operators. 
+
+Figure~\ref{fig:logicalplan-optimized} shows the final plan to execute produced by optimizing the original plan for our example code from Figure~\ref{fig:logicalplan}. The expression \texttt{OpAt $\rightarrow$ OpAx} which represents the computation of $X^\mathrm{T}y$ from the middle pipeline in~Figure~\ref{fig:logicalplan} is merged into the operator \texttt{OpAtx} in the optimized plan illustrated in Figure~\ref{fig:logicalplan-optimized}. The latter operator is a specialed implementation to compute a matrix transpose times vector multiplication in a single pass over the input. The next expression that gets optimized is \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAt $\rightarrow$ OpAB $\leftarrow$ OpCbindScalar $\leftarrow$ OpMapBlock}. This expression represents the part of the code that slices out $X$ from the input matrix and subsequently computes $X^\mathrm{T}X$. This expression is rewritten in two steps: first, the partial expression \texttt{OpAt $\rightarrow$ OpAB} is merged to \texttt{OpAtB}, so that the full expression becomes \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAtB $\leftarrow$ OpCbindScalar $\leftarrow$ OpMapBlock}. Second, we recognize that both of the inputs to \texttt{OpAtB} refer to same matrix, which allows us to replace \texttt{OpAtB} with a special operator \texttt{OpAtA} for transpose-times-self matrix multiplications. This saves us from having to compute the result of \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAt}, and shrinks the resulting DAG down to \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAtA}.
+
+\subsubsection{Physical Optimization}
+
+Two physical operators (concrete implementations) available for Transpose-Times-Self operation: standard operator AtA; operator AtA\_slim, specialized implementation for tall \& skinny matrices; Optimizer must choose; currently: depends on user-defined threshold for number of columns; ideally: cost based decision, dependent on estimates of intermediate result sizes; specialized logical operator for Transpose-Times-Self matrix multiplication; Samsara computes ATA via row-outer-product formulation; executes in a single pass over row-partitioned A~\cite{Schelter2012}; 
+
+\begin{figure}[b]
     \centering
          \begin{subfigure}[b]{0.45\textwidth}
   \centering
@@ -213,6 +221,10 @@ Two physical operators (concrete implementations) available for Transpose-Times-
 {\em SparkR} https://spark.apache.org/docs/latest/sparkr.html
 
 {\em MLI} \cite{Sparks2013}
+
+\section{Experimental Evaluation}
+
+TODO: Show benefits of optimization
 
 \section{Conclusion and Future Work}
 
