@@ -1,0 +1,301 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+% \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading nips_2016
+%
+% to avoid loading the natbib package, add option nonatbib:
+% \usepackage[nonatbib]{nips_2016}
+
+%\usepackage{nips_2016}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+\usepackage[final]{nips_2016}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{wrapfig}
+
+\lstset{
+  basicstyle=\small\ttfamily,
+  frame=tb,
+  numbers=left,
+  numberstyle=\tiny,
+  emph={%  
+    val, for%
+    },emphstyle={\bfseries}%  
+}
+
+\title{Samsara: Declarative Machine Learning\\ on Distributed Dataflow Systems}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+\author{
+  Author~A\\
+  \texttt{authorA@email.com} \\
+  \And
+  Author~B\\
+  \texttt{authorB@email.com} \\
+}
+
+\begin{document}
+% \nipsfinalcopy is no longer used
+
+\maketitle
+
+\begin{abstract}
+  The abstract.
+\end{abstract}
+
+\section{Introduction}
+
+\begin{itemize}[noitemsep]
+  \item data processing and ML on large datasets stored in distributed filesystems becoming ubiquitous, distributed dataflow systems such as Apache Spark~\cite{Zaharia2012} and Apache Flink~\cite{Alexandrov2014} hard to program without detailed understanding of underlying execution model. Usually require programs to be structured using second-order functions + UDF on partitioned datasets.
+  \item highly non-declarative programming, stark contrast to common like R, MATLAB or numpy
+\end{itemize}
+
+\begin{itemize}[noitemsep]  
+  \item Samsara is an easy-to-use domain specific language (DSL) for distributed large-scale machine learning on systems like Apache Spark and Apache Flink
+  \item part of the Apache Mahout project
+  \item uses Scala as programming/scripting environment
+  \item system-agnostic, R-like DSL
+  \item algebraic expression optimizer for distributed linear algebra, provides a translation layer to distributed engines
+\end{itemize}
+
+\section{Overview}
+
+\subsection{Architecture}
+
+
+Explain Figure~\ref{fig:architecture}, different layers, optimizer, logical + physical operators, different backends
+
+\begin{figure}
+  \centering
+  \includegraphics[scale=.5]{figures/architecture-crop}
+  \caption{Architecture.}
+  \label{fig:architecture}
+\end{figure}
+
+\subsection{Language Constructs}
+
+Scalar real values; In-memory vectors: dense, 2 types of sparse; In-memory matrices, sparse and dense, a number of specialized matrices
+
+Distributed Row Matrices (DRM)
+huge matrix, partitioned by rows
+lives in the main memory of the cluster
+provides small set of parallelized 
+       operations
+lazily evaluated operation execution
+
+matrix, vector, scalar operators: 
+in-memory, distributed
+
+
+slicing operators
+
+
+
+assignments (in-memory only)
+
+
+vector-specific
+
+summaries
+
+solving linear systems
+
+in-memory decompositions
+
+
+
+distributed decompositions; caching of DRMs
+
+\subsection{Example: Distributed Ridge Regression}
+
+$\hat{\beta} = (X^\mathrm{T}X + \lambda I)^{-1} X^\mathrm{T}y$, assume tall \& skinny matrix. Exploit the fact that $X^\mathrm{T} X$ as well as $X^\mathrm{T} y$ live in column space of $X$ with small dimensionality which allows to fit $X^\mathrm{T} X$ into memory of driver for moderate number of columns.
+
+Form design matrix $X$ by slicing out all columns except for the last one from the input data matrix, and add a column for the bias term on the left (cf.,~line~2). Slice out the last column of the input data matrix to retrieve the target vector $y$~(cf.,~line~3). Compute $X^\mathrm{T} X$ via distributed matrix multiplication (cf.,~line~5). Compute $X^\mathrm{T}y$ via distributed matrix vector multiplication (cf.,~line~6). Materialize $X^\mathrm{T} X$  and $X^\mathrm{T} y$ on the driver (cf.,~lines 8 \& 9), add the regularization term~(cf.,~line~11). Use an in-core solver to compute the parameter estimate $\hat{\beta}$~(cf.,~line~13).. 
+
+\begin{lstlisting}[caption={Distributed Ridge Regression for tall \& skinny matrices using Samsara.}\label{lst:linearRegression},captionpos=b] 
+def dridge(data: DrmLike[Int], lambda: Double): Vector = {
+  val drmX = data(::, 0 until data.ncol) cbind 1
+  val y = data.collect(::, data.ncol)
+
+  val drmXtX = drmX.t %*% drmX
+  val drmXty = drmX.t %*% y
+
+  val XtX = drmXtX.collect 
+  val Xty = drmXty.collect(::, 0) 
+
+  XtX.diagv += lambda
+
+  solve(XtX, Xty)
+}
+\end{lstlisting}
+
+\begin{figure}
+    \centering
+         \begin{subfigure}[b]{0.5\textwidth}
+            \centering
+            \includegraphics[scale=.33]{figures/linear-regression-logicalplan-crop}
+            \caption{TBD.}
+            \label{fig:logicalplan}
+        \end{subfigure}
+  \hfill
+         \begin{subfigure}[b]{0.4\textwidth}
+            \centering
+            \includegraphics[scale=.33]{figures/linear-regression-logicalplan-optimized-crop}
+            \caption{TBD.}
+            \label{fig:logicalplan-optimized}
+        \end{subfigure}
+        \caption{\label{fig:logicalplans} Logical execution plan resulting from the distributed linear regression code in~Listing~\ref{lst:linearRegression} (before and after optimization).}
+\end{figure}
+
+
+\subsection{Runtime \& Optimization}
+
+Execution is defered, user composes logical operators; Computational actions implicitly trigger optimization (= selection of physical plan) and execution; Optimization factors:  size of operands, orientation of operands, partitioning, sharing of computational paths; e. g.: matrix multiplication: 5 physical operators for drmA \%*\% drmB; 2 operators for drmA \%*\% inMemA; 1 operator for drm A \%*\% x; 1 operator for x \%*\% drmA; Computation of ATA in example; Naïve execution: 1st  pass: transpose A; (requires repartitioning of A); 2nd pass: multiply result with A; (expensive, potentially requires repartitioning again); Logical optimization: Optimizer rewrites plan to use; specialized logical operator for Transpose-Times-Self matrix multiplication; Samsara computes ATA via row-outer-product formulation; executes in a single pass over row-partitioned A~\cite{Schelter2012}; 
+
+%LogicalRewrite(OpABAnyKey(OpAt(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)), OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)),OpAtA(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)))
+%LogicalRewrite(OpAx(OpAt(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0)), 9),OpAtx(OpCBindScalar(OpMapBlock(CheckpointedSparkDrm(9, 5)), 1.0), 9))
+
+
+Two physical operators (concrete implementations) available for Transpose-Times-Self operation: standard operator AtA; operator AtA\_slim, specialized implementation for tall \& skinny matrices; Optimizer must choose; currently: depends on user-defined threshold for number of columns; ideally: cost based decision, dependent on estimates of intermediate result sizes
+
+\begin{figure}
+    \centering
+         \begin{subfigure}[b]{0.45\textwidth}
+  \centering
+  \includegraphics[scale=.35]{figures/ata-nonlocal-crop}
+  \caption{Distributed computation of $X^{T}X$ via summation of partial outer products of rows.}
+  \label{fig:atanonlocal}
+        \end{subfigure}
+  \hfill
+         \begin{subfigure}[b]{0.45\textwidth}
+  \centering
+  \includegraphics[scale=.35]{figures/ata-local-crop}
+  \caption{Distributed computation of $X^{T}X$ via summation of partial outer products of rows.}
+  \label{fig:atalocal}
+        \end{subfigure}
+
+        \caption{\label{fig:ataphysical} Physical execution strategies for computing a gram matrix.}
+\end{figure}
+
+\section{Limitations}
+
+ - lack of native speed for in-core matrix operations, currently Colt, in the process of integrating ViennaCL~\cite{Tillet2013}
+ - high variance in backed performance, e.g. lack of intermediate result caching in Flink
+
+\section{Related Work}
+
+{\em SystemML} \cite{Ghoting2011} - DSL instead of custom language (easier integration of external code), user decides on placement of matrices (e.g. in-core or in cluster), greatly simplifies the optimization. However, less "compiler-style" optimizations possible in Samsara, currently no cost-based optimizer.
+
+{\em SparkR} https://spark.apache.org/docs/latest/sparkr.html
+
+\section{Conclusion and Future Work}
+
+% \section{Citations, figures, tables, references}
+% \label{others}
+
+% These instructions apply to everyone.
+
+% \subsection{Citations within the text}
+
+% The \verb+natbib+ package will be loaded for you by default.
+% Citations may be author/year or numeric, as long as you maintain
+% internal consistency.  As to the format of the references themselves,
+% any style is acceptable as long as it is used consistently.
+
+% The documentation for \verb+natbib+ may be found at
+% \begin{center}
+%   \url{http://mirrors.ctan.org/macros/latex/contrib/natbib/natnotes.pdf}
+% \end{center}
+% Of note is the command \verb+\citet+, which produces citations
+% appropriate for use in inline text.  For example,
+% \begin{verbatim}
+%    \citet{hasselmo} investigated\dots
+% \end{verbatim}
+% produces
+% \begin{quote}
+%   Hasselmo, et al.\ (1995) investigated\dots
+% \end{quote}
+
+% If you wish to load the \verb+natbib+ package with options, you may
+% add the following before loading the \verb+nips_2016+ package:
+% \begin{verbatim}
+%    \PassOptionsToPackage{options}{natbib}
+% \end{verbatim}
+
+% If \verb+natbib+ clashes with another package you load, you can add
+% the optional argument \verb+nonatbib+ when loading the style file:
+% \begin{verbatim}
+%    \usepackage[nonatbib]{nips_2016}
+% \end{verbatim}
+
+
+
+
+
+% \subsection{Tables}
+
+% All tables must be centered, neat, clean and legible.  The table
+% number and title always appear before the table.  See
+% Table~\ref{sample-table}.
+
+% Place one line space before the table title, one line space after the
+% table title, and one line space after the table. The table title must
+% be lower case (except for first word and proper nouns); tables are
+% numbered consecutively.
+
+% Note that publication-quality tables \emph{do not contain vertical
+%   rules.} We strongly suggest the use of the \verb+booktabs+ package,
+% which allows for typesetting high-quality, professional tables:
+% \begin{center}
+%   \url{https://www.ctan.org/pkg/booktabs}
+% \end{center}
+% This package was used to typeset Table~\ref{sample-table}.
+
+% \begin{table}[t]
+%   \caption{Sample table title}
+%   \label{sample-table}
+%   \centering
+%   \begin{tabular}{lll}
+%     \toprule
+%     \multicolumn{2}{c}{Part}                   \\
+%     \cmidrule{1-2}
+%     Name     & Description     & Size ($\mu$m) \\
+%     \midrule
+%     Dendrite & Input terminal  & $\sim$100     \\
+%     Axon     & Output terminal & $\sim$10      \\
+%     Soma     & Cell body       & up to $10^6$  \\
+%     \bottomrule
+%   \end{tabular}
+% \end{table}
+
+\newpage
+
+{\small
+  \bibliography{samsara}
+  \bibliographystyle{plain}}
+
+\end{document}
