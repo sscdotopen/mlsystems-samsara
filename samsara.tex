@@ -64,7 +64,9 @@
 \maketitle
 
 \begin{abstract}
-  The abstract.
+  We present {\em Samsara}, a domain-specific language for declarative machine learning. Samsara allows its users to specify programs using a set of common matrix abstractions and linear algebraic operations, similar to R or MATLAB. Samsara automatically compiles, optimizes and executes these programs on distributed dataflow systems. The aim of Samsara is to allow mathematicians and data scientists to leverage the scalability of distributed dataflow systems via common declarative abstractions, without the need for deep knowledge about the programming and execution models of such systems. Samsara is part of the Apache Mahout library and supports a variety of backends, such as Apache Spark or Apache Flink. 
+
+  In this paper, we introduce the concepts of Samsara, showcase its compilation and optimization techniques using a simple example, and experimentally evaluate some of the benefits of these optimizations.
 \end{abstract}
 
 \section{Introduction}
@@ -98,37 +100,11 @@ Explain Figure~\ref{fig:architecture}, different layers, optimizer, logical + ph
 
 \subsection{Language Constructs}
 
+Overview only, refer to reference\footnote{http://mahout.apache.org/users/sparkbindings/ScalaSparkBindings.pdf} for details.
+
 Scalar real values; In-memory vectors: dense, 2 types of sparse; In-memory matrices, sparse and dense, a number of specialized matrices
 
-Distributed Row Matrices (DRM)
-huge matrix, partitioned by rows
-lives in the main memory of the cluster
-provides small set of parallelized 
-       operations
-lazily evaluated operation execution
-
-matrix, vector, scalar operators: 
-in-memory, distributed
-
-
-slicing operators
-
-
-
-assignments (in-memory only)
-
-
-vector-specific
-
-summaries
-
-solving linear systems
-
-in-memory decompositions
-
-
-
-distributed decompositions; caching of DRMs
+Distributed Row Matrices (DRM): huge matrix, partitioned by rows, lives in the main memory of the cluster, provides small set of parallelized operations, lazily evaluated operation execution, matrix, vector, scalar operators: in-memory, distributed; slicing operators; assignments (in-memory only); vector-specific; summaries, solving linear systems; in-memory decompositions; distributed decompositions; caching of DRMs;
 
 \subsection{Example: Distributed Ridge Regression}
 
@@ -158,17 +134,17 @@ def dridge(data: DrmLike[Int], lambda: Double): Vector = {
          \begin{subfigure}[b]{0.5\textwidth}
             \centering
             \includegraphics[scale=.33]{figures/linear-regression-logicalplan-crop}
-            \caption{TBD.}
+            \caption{Logical plan before optimization.}
             \label{fig:logicalplan}
         \end{subfigure}
   \hfill
          \begin{subfigure}[b]{0.4\textwidth}
             \centering
             \includegraphics[scale=.33]{figures/linear-regression-logicalplan-optimized-crop}
-            \caption{TBD.}
+            \caption{Rewritten logical plan.}
             \label{fig:logicalplan-optimized}
         \end{subfigure}
-        \caption{\label{fig:logicalplans} Logical execution plan resulting from the distributed linear regression code in~Listing~\ref{lst:linearRegression} (before and after optimization).}
+        \caption{\label{fig:logicalplans} Logical execution plan resulting from the distributed ridge regression code in~Listing~\ref{lst:linearRegression} (before and after optimization).}
 \end{figure}
 
 
@@ -188,31 +164,31 @@ Figure~\ref{fig:logicalplan-optimized} shows the final plan to execute produced 
 
 \subsubsection{Physical Optimization}
 
-Two physical operators (concrete implementations) available for Transpose-Times-Self operation: standard operator AtA; operator AtA\_slim, specialized implementation for tall \& skinny matrices; Optimizer must choose; currently: depends on user-defined threshold for number of columns; ideally: cost based decision, dependent on estimates of intermediate result sizes; specialized logical operator for Transpose-Times-Self matrix multiplication; Samsara computes ATA via row-outer-product formulation; executes in a single pass over row-partitioned A~\cite{Schelter2012}; 
+local choice based on three characteristics of operands: special structure (e.g. diagonal matrix), dimensions or partitionining (e.g., to avoid joins for co-partitioned data)
 
-\begin{figure}[b]
+We discuss the choice of the physical operator for the logical operator \texttt{OpAtA} in our example. Samsara offers two different physical executions for this matrix multiplication both of which are variants of the row-outer-product formulation of matrix multiplication. This shape of computation is very common in distributed cases, as the resulting computation executes in a single pass over row-partitioned data~\cite{Schelter2012}. Samsara features a physical operator for general transpose-times-self matrix multiplication~(cf.,~Figure~\ref{fig:atanonlocal}), and another variant that is optimized for a tall and skinny input matrix, illustrated in~Figure~\ref{fig:atalocal}.
+
+Let $(X_1,\dots,X_p)$ denote the $p$  $n$ denote the number of columns of the $X$.
+
+The second physical operator \texttt{AtA\_slim} assumes that a matrix of size $\frac{n(n+1)}{2}$ (the upper triangular part of an $n$ by $n$ matrix) fits into the memory of all machines in the cluster. $X^\mathrm{T}X = \sum_{i = 1}^{p} X_i^\mathrm{T}X_i$ 
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[b]{0.45\textwidth}
     \centering
-         \begin{subfigure}[b]{0.45\textwidth}
-  \centering
-  \includegraphics[scale=.35]{figures/ata-nonlocal-crop}
-  \caption{Distributed computation of $X^{T}X$ via summation of partial outer products of rows.}
-  \label{fig:atanonlocal}
-        \end{subfigure}
+    \includegraphics[scale=.35]{figures/ata-nonlocal-crop}
+    \caption{Distributed computation of $X^{T}X$ via summation of partial outer products of rows.}
+    \label{fig:atanonlocal}
+  \end{subfigure}
   \hfill
-         \begin{subfigure}[b]{0.45\textwidth}
-  \centering
-  \includegraphics[scale=.35]{figures/ata-local-crop}
-  \caption{Distributed computation of $X^{T}X$ via summation of partial outer products of rows.}
-  \label{fig:atalocal}
-        \end{subfigure}
-
-        \caption{\label{fig:ataphysical} Physical execution strategies for computing a gram matrix.}
+  \begin{subfigure}[b]{0.45\textwidth}
+    \centering
+    \includegraphics[scale=.35]{figures/ata-local-crop}
+    \caption{Distributed computation of $X^{T}X$ via summation of partial outer products of rows.}
+    \label{fig:atalocal}
+  \end{subfigure}
+  \caption{\label{fig:ataphysical} Physical execution strategies for computing a gram matrix.}
 \end{figure}
-
-\section{Limitations}
-
- - lack of native speed for in-core matrix operations, currently Colt, in the process of integrating ViennaCL~\cite{Tillet2013}
- - high variance in backed performance, e.g. lack of intermediate result caching in Flink
 
 \section{Related Work}
 
@@ -224,10 +200,14 @@ Two physical operators (concrete implementations) available for Transpose-Times-
 
 \section{Experimental Evaluation}
 
-TODO: Show benefits of optimization
+TODO: Show benefits of optimization for synthetically generated data, three flavors: no logical optimization, logical but not physical, logical plus physical
 
 \section{Conclusion and Future Work}
 
+Limitations:
+
+ - lack of native speed for in-core matrix operations, currently Colt, in the process of integrating ViennaCL~\cite{Tillet2013}
+ - high variance in backed performance, e.g. lack of intermediate result caching in Flink
 % \section{Citations, figures, tables, references}
 % \label{others}
 
