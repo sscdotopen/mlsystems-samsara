@@ -132,9 +132,9 @@ distributed decompositions; caching of DRMs
 
 \subsection{Example: Distributed Ridge Regression}
 
-$\hat{\beta} = (X^\mathrm{T}X + \lambda I)^{-1} X^\mathrm{T}y$, assume tall \& skinny matrix. Exploit the fact that $X^\mathrm{T} X$ as well as $X^\mathrm{T} y$ live in column space of $X$ with small dimensionality which allows to fit $X^\mathrm{T} X$ into memory of driver for moderate number of columns.
+Our running example throughout this paper will be the common task of predicting a continuous target vector $y$ from a feature matrix $X$ by ridge regression. For our example, we assume that $X$ is a tall and skinny matrix. We aim to compute the parameter vector $\beta$ of the regression by solving the normal equation: $\hat{\beta} = (X^\mathrm{T}X + \lambda I)^{-1} X^\mathrm{T}y$. In our implementation, we exploit the fact that $X^\mathrm{T} X$ as well as $X^\mathrm{T} y$ live in the column space of $X$ with small dimensionality (as $X$ is tall and skinny). This allows us to fit $X^\mathrm{T} X$ into memory of driver for moderate number of columns, as it will only require memory quadratic in the number of columns of~$X$.
 
-Form design matrix $X$ by slicing out all columns except for the last one from the input data matrix, and add a column for the bias term on the left (cf.,~line~2). Slice out the last column of the input data matrix to retrieve the target vector $y$~(cf.,~line~3). Compute $X^\mathrm{T} X$ via distributed matrix multiplication (cf.,~line~5). Compute $X^\mathrm{T}y$ via distributed matrix vector multiplication (cf.,~line~6). Materialize $X^\mathrm{T} X$  and $X^\mathrm{T} y$ on the driver (cf.,~lines 8 \& 9), add the regularization term~(cf.,~line~11). Use an in-core solver to compute the parameter estimate $\hat{\beta}$~(cf.,~line~13).. 
+The resulting Samsara program is shown in Listing~\ref{lst:linearRegression}. The code defines a function \texttt{dridge} which takes two arguments: a distributed data matrix containing the features and the target variable (in the right-most column), as well as the regularization parameter $\lambda$ (cf.,~line~1). We form the feature matrix $X$ by slicing out all columns except for the right-most one from the input data matrix, and append a column of ones for the bias term~(cf.,~line~2). Next, we slice out the right-post column of the input data matrix to retrieve the target vector~$y$~(cf.,~line~3). We compute $X^\mathrm{T} X$ via distributed matrix multiplication~(cf.,~line~5), and $X^\mathrm{T}y$ via distributed matrix vector multiplication~(cf.,~line~6). Finally, we materialize $X^\mathrm{T} X$  and $X^\mathrm{T} y$ on the driver (cf., the \texttt{collect} calls in~lines~8~\&~9), add the regularization term to the diagonal of $X^\mathrm{T} X$~(cf.,~line~11), and use an in-core solver to compute the parameter estimate $\beta$~(cf.,~line~13).
 
 \begin{lstlisting}[caption={Distributed Ridge Regression for tall \& skinny matrices using Samsara.}\label{lst:linearRegression},captionpos=b] 
 def dridge(data: DrmLike[Int], lambda: Double): Vector = {
@@ -208,9 +208,11 @@ Two physical operators (concrete implementations) available for Transpose-Times-
 
 \section{Related Work}
 
-{\em SystemML} \cite{Ghoting2011} - DSL instead of custom language (easier integration of external code), user decides on placement of matrices (e.g. in-core or in cluster), greatly simplifies the optimization. However, less "compiler-style" optimizations possible in Samsara, currently no cost-based optimizer.
+{\em SystemML} \cite{Ghoting2011} - lightweight DSL instead of custom language (easier integration of external code), user decides on placement of matrices (e.g. in-core or in cluster), greatly simplifies the optimization. However, only non-holistic, non-cost-based optimization possible in Samsara, in contrast to~\cite{Boehm2014}
 
 {\em SparkR} https://spark.apache.org/docs/latest/sparkr.html
+
+{\em MLI} \cite{Sparks2013}
 
 \section{Conclusion and Future Work}
 
