@@ -64,16 +64,18 @@
 \maketitle
 
 \begin{abstract}
-  We present {\em Samsara}, a domain-specific language for declarative machine learning. Samsara allows its users to specify programs using a set of common matrix abstractions and linear algebraic operations, similar to R or MATLAB. Samsara automatically compiles, optimizes and executes these programs on distributed dataflow systems. The aim of Samsara is to allow mathematicians and data scientists to leverage the scalability of distributed dataflow systems via common declarative abstractions, without the need for deep knowledge about the programming and execution models of such systems. Samsara is part of the Apache Mahout library and supports a variety of backends, such as Apache Spark or Apache Flink. 
+  We present {\em Samsara}, a domain-specific language for declarative machine learning in cluster environments. Samsara allows its users to specify programs using a set of common matrix abstractions and linear algebraic operations, similar to R or MATLAB. Samsara automatically compiles, optimizes and executes these programs on distributed dataflow systems. The aim of Samsara is to allow mathematicians and data scientists to leverage the scalability of distributed dataflow systems via common declarative abstractions, without the need for deep knowledge about the programming and execution models of such systems. Samsara is part of the Apache Mahout library and supports a variety of backends, such as Apache Spark or Apache Flink. 
 
   In this paper, we introduce the concepts of Samsara, showcase its compilation and optimization techniques using a simple example, and experimentally evaluate some of the benefits of these optimizations.
 \end{abstract}
 
 \section{Introduction}
 
+A crucial requirement in many modern data analysis scenarios is to apply machine learning and data mining to large datasets stored in distributed filesystems running on a cluster of machines. In such an environment, data analysis is typically conducted using parallel processing engines, that allow for scalable, data-parallel execution of programs. Examples of such systems include distributed dataflow systems such as Apache Spark~\cite{Zaharia2012} and Apache Flink~\cite{Alexandrov2014}. Unfortunately, these systems are difficult to program, as their programming model is heavily influenced by the underlying data-parallel execution scheme. Typically programs consist of a sequence of parallelizable second-order functions (such as \texttt{map}, \texttt{reduce} or \texttt{groupBy}) that dictate how the system should execute user-defined first-order functions on partitioned data~\cite{Battre2010,Zaharia2012}. Such programming models are  highly non-intuitive for users without a background in distributed systems, and are in general hard to program without a detailed understanding of the underlying execution model. This problem is partially resolved by the emergence of easy-to-use machine learning libraries for such systems~\cite{Meng2016}.
+
 \begin{itemize}[noitemsep]
-  \item data processing and ML on large datasets stored in distributed filesystems becoming ubiquitous, distributed dataflow systems such as Apache Spark~\cite{Zaharia2012} and Apache Flink~\cite{Alexandrov2014} hard to program without detailed understanding of underlying execution model. Usually require programs to be structured using second-order functions + UDF on partitioned datasets.
   \item highly non-declarative programming, stark contrast to common like R, MATLAB or numpy
+  \item discuss different user groups of ML software, position Samsara to Mllib
 \end{itemize}
 
 \begin{itemize}[noitemsep]  
@@ -100,11 +102,13 @@ Explain Figure~\ref{fig:architecture}, different layers, optimizer, logical + ph
 
 \subsection{Language Constructs}
 
-Overview only, refer to reference\footnote{http://mahout.apache.org/users/sparkbindings/ScalaSparkBindings.pdf} for details.
+Overview only, refer to reference~\cite{Lyubimov2016}
 
 Scalar real values; In-memory vectors: dense, 2 types of sparse; In-memory matrices, sparse and dense, a number of specialized matrices
 
 Distributed Row Matrices (DRM): huge matrix, partitioned by rows, lives in the main memory of the cluster, provides small set of parallelized operations, lazily evaluated operation execution, matrix, vector, scalar operators: in-memory, distributed; slicing operators; assignments (in-memory only); vector-specific; summaries, solving linear systems; in-memory decompositions; distributed decompositions; caching of DRMs;
+
+The Mahout library contains a number of algorithm implementations built on the Samsara DSL, e.g., naive bayes text classification~\cite{Rennie2003}, cooccurrence analysis for recommendations~\cite{Schelter2012,Dunning2014}, matrix factorization with Alternating Least Squares~\cite{Zhou2008}, distributed QR factorization, distributed stochastic singular value decomposition~\cite{Halko2012}, and distributed stochastic principal components analysis.
 
 \subsection{Example: Distributed Ridge Regression}
 
@@ -162,15 +166,19 @@ In the logical optimization phase, Samsara uses pattern matching to derive rewri
 
 Figure~\ref{fig:logicalplan-optimized} shows the final plan to execute produced by optimizing the original plan for our example code from Figure~\ref{fig:logicalplan}. The expression \texttt{OpAt $\rightarrow$ OpAx} which represents the computation of $X^\mathrm{T}y$ from the middle pipeline in~Figure~\ref{fig:logicalplan} is merged into the operator \texttt{OpAtx} in the optimized plan illustrated in Figure~\ref{fig:logicalplan-optimized}. The latter operator is a specialed implementation to compute a matrix transpose times vector multiplication in a single pass over the input. The next expression that gets optimized is \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAt $\rightarrow$ OpAB $\leftarrow$ OpCbindScalar $\leftarrow$ OpMapBlock}. This expression represents the part of the code that slices out $X$ from the input matrix and subsequently computes $X^\mathrm{T}X$. This expression is rewritten in two steps: first, the partial expression \texttt{OpAt $\rightarrow$ OpAB} is merged to \texttt{OpAtB}, so that the full expression becomes \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAtB $\leftarrow$ OpCbindScalar $\leftarrow$ OpMapBlock}. Second, we recognize that both of the inputs to \texttt{OpAtB} refer to same matrix, which allows us to replace \texttt{OpAtB} with a special operator \texttt{OpAtA} for transpose-times-self matrix multiplications. This saves us from having to compute the result of \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAt}, and shrinks the resulting DAG down to \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAtA}.
 
+TODO discuss caching via \texttt{checkpoint()}. Explain why optimizer cannot decide this.
+
 \subsubsection{Physical Optimization}
 
 local choice based on three characteristics of operands: special structure (e.g. diagonal matrix), dimensions or partitionining (e.g., to avoid joins for co-partitioned data)
 
-We discuss the choice of the physical operator for the logical operator \texttt{OpAtA} in our example. Samsara offers two different physical executions for this matrix multiplication both of which are variants of the row-outer-product formulation of matrix multiplication. This shape of computation is very common in distributed cases, as the resulting computation executes in a single pass over row-partitioned data~\cite{Schelter2012}. Samsara features a physical operator for general transpose-times-self matrix multiplication~(cf.,~Figure~\ref{fig:atanonlocal}), and another variant that is optimized for a tall and skinny input matrix, illustrated in~Figure~\ref{fig:atalocal}.
+We discuss the choice of the physical operator for the logical operator \texttt{OpAtA} in our example. Samsara offers two different physical executions for this matrix multiplication both of which are variants of the row-outer-product formulation of matrix multiplication. Samsara features a physical operator for general transpose-times-self matrix multiplication~(cf.,~Figure~\ref{fig:atanonlocal}), and another variant that is optimized for a tall and skinny input matrix, illustrated in~Figure~\ref{fig:atalocal}.
 
-Let $(X_1,\dots,X_p)$ denote the $p$  $n$ denote the number of columns of the $X$.
+Let $(X_1,\dots,X_p)$ denote the $p$ partitions (blocks of rows) of $X$, such that horizontally stacking them restores the original $X$; furthermore let $m$ and $n$ denote the number of rows and columns of $X$.
 
-The second physical operator \texttt{AtA\_slim} assumes that a matrix of size $\frac{n(n+1)}{2}$ (the upper triangular part of an $n$ by $n$ matrix) fits into the memory of all machines in the cluster. $X^\mathrm{T}X = \sum_{i = 1}^{p} X_i^\mathrm{T}X_i$ 
+Based on sum of outer products of the rows of $X$. $X^\mathrm{T}X = \sum_{i=1}^{m} x_{i\bullet}^\mathrm{T} x_{i\bullet}$ 
+
+The second physical operator \texttt{AtA\_slim} assumes that we can fit as many matrices of size $(n(n+1))/2$ (the upper triangular part of an $n$ by $n$ matrix) fits into the memory of a worker machines as we have tasks assigned to it. The actual execution of the operator is illustrated in Figure~\ref{fig:atalocal}: Every worker $i$ computes the upper triangular half of $X_i^\mathrm{T}X_i$ with regard to its assigned matrix partition $X_i$. The driver machine collects the results of these computations from the workers and sums them up to produce the final result: $X^\mathrm{T}X = \sum_{i = 1}^{p} X_i^\mathrm{T}X_i$, which it redistributes in the cluster.
 
 \begin{figure}[t]
   \centering
@@ -197,6 +205,8 @@ The second physical operator \texttt{AtA\_slim} assumes that a matrix of size $\
 {\em SparkR} https://spark.apache.org/docs/latest/sparkr.html
 
 {\em MLI} \cite{Sparks2013}
+
+{\em Matrix Computations in Spark} \cite{Zadeh2016}
 
 \section{Experimental Evaluation}
 
