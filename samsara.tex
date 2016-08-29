@@ -73,22 +73,18 @@
 
 A crucial requirement in many modern data analysis scenarios is to apply machine learning and data mining to large datasets stored in distributed filesystems running on a cluster of machines. In such an environment, data analysis is typically conducted using parallel processing engines, that allow for scalable, data-parallel execution of programs. Examples of such systems include distributed dataflow systems such as Apache Spark~\cite{Zaharia2012} and Apache Flink~\cite{Alexandrov2014}. Unfortunately, these systems are difficult to program, as their programming model is heavily influenced by the underlying data-parallel execution scheme. Typically programs consist of a sequence of parallelizable second-order functions (such as \texttt{map}, \texttt{reduce} or \texttt{groupBy}) that dictate how the system should execute user-defined first-order functions on partitioned data~\cite{Battre2010,Zaharia2012}. Such programming models are  highly non-intuitive for users without a background in distributed systems, and are in general hard to program without a detailed understanding of the underlying execution model. This problem is partially resolved by the emergence of easy-to-use machine learning libraries for such systems~\cite{Meng2016}.
 
-\begin{itemize}[noitemsep]
-  \item highly non-declarative programming, stark contrast to common like R, MATLAB or numpy
-  \item discuss different user groups of ML software, position Samsara to Mllib
-\end{itemize}
+However, a library is not sufficient for all kinds of users of machine learning, many advanced users need to create new algorithms and adapt existing ones, especially for prototyping and exploratory data analysis. Samsara targets exactly these use cases. It provides a lightweight Scala DSL that offers different matrix primitives and supports a wide set of linear algebraic operations~(cf.,~Section~\ref{sec:architecture}). Users decide about the physical placement of matrices (e.g., in the memory on the driver machine or distributed in the cluster), and write programs by chaining transformations on these~(cf.,~Section~\ref{sec:language}). The resulting programming model is highly declarative: users specify what operations to execute on these matrices, but not how they should exactly be executed. Instead Samsara compiles the users' programs to the programming abstractions of the underlying distributed dataflow systems. During this process, an algebraic expression optimizer conducts logical optimizations, and also decides on the physical execution strategy~\ref{sec:optimization}.
 
-\begin{itemize}[noitemsep]  
-  \item Samsara is an easy-to-use domain specific language (DSL) for distributed large-scale machine learning on systems like Apache Spark and Apache Flink
-  \item part of the Apache Mahout project
-  \item uses Scala as programming/scripting environment
-  \item system-agnostic, R-like DSL
-  \item algebraic expression optimizer for distributed linear algebra, provides a translation layer to distributed engines
+The contributions of this paper are the following:
+\begin{itemize}[noitemsep]
+  \item TBD
+  \item TBD
+  \item An experimental evaluation of the benefits of the proposed optimizer (Section~sec:\ref{sec:experiments}).
 \end{itemize}
 
 \section{Overview}
 
-\subsection{Architecture}
+\subsection{Architecture}\label{sec:architecture}
 
 
 Explain Figure~\ref{fig:architecture}, different layers, optimizer, logical + physical operators, different backends
@@ -100,7 +96,7 @@ Explain Figure~\ref{fig:architecture}, different layers, optimizer, logical + ph
   \label{fig:architecture}
 \end{figure}
 
-\subsection{Language Constructs}
+\subsection{Language Constructs}\label{sec:language}
 
 Overview only, refer to reference~\cite{Lyubimov2016}
 
@@ -135,24 +131,31 @@ def dridge(data: DrmLike[Int], lambda: Double): Vector = {
 
 \begin{figure}
     \centering
-         \begin{subfigure}[b]{0.5\textwidth}
+         \begin{subfigure}[b]{0.37\textwidth}
             \centering
-            \includegraphics[scale=.33]{figures/linear-regression-logicalplan-crop}
-            \caption{Logical plan before optimization.}
+            \includegraphics[scale=.25]{figures/linear-regression-logicalplan-crop}
+            \caption{Logical plan before optimization.\\$\,$}
             \label{fig:logicalplan}
         \end{subfigure}
   \hfill
-         \begin{subfigure}[b]{0.4\textwidth}
+         \begin{subfigure}[b]{0.28\textwidth}
             \centering
-            \includegraphics[scale=.33]{figures/linear-regression-logicalplan-optimized-crop}
-            \caption{Rewritten logical plan.}
+            \includegraphics[scale=.25]{figures/linear-regression-logicalplan-optimized-crop}
+            \caption{Rewritten logical plan.\\$\,$}
             \label{fig:logicalplan-optimized}
         \end{subfigure}
+  \hfill
+         \begin{subfigure}[b]{0.25\textwidth}
+            \centering
+            \includegraphics[scale=.25]{figures/linear-regression-logicalplan-optimized-caching-crop}
+            \caption{Rewritten logical plan with manual caching.}
+            \label{fig:logicalplan-optimized-caching}
+        \end{subfigure}  
         \caption{\label{fig:logicalplans} Logical execution plan resulting from the distributed ridge regression code in~Listing~\ref{lst:linearRegression} (before and after optimization).}
 \end{figure}
 
 
-\subsection{Runtime \& Optimization}
+\subsection{Runtime \& Optimization}\label{sec:optimization}
 
 Execution is defered, user composes logical operators; Computational actions implicitly trigger optimization (= selection of physical plan) and execution; Optimization factors:  size of operands, orientation of operands, partitioning, sharing of computational paths; e. g.: matrix multiplication: 5 physical operators for drmA \%*\% drmB; 2 operators for drmA \%*\% inMemA; 1 operator for drm A \%*\% x; 1 operator for x \%*\% drmA; Computation of ATA in example; Naïve execution: 1st  pass: transpose A; (requires repartitioning of A); 2nd pass: multiply result with A; (expensive, potentially requires repartitioning again); Logical optimization: Optimizer rewrites plan to use; 
 
@@ -166,7 +169,7 @@ In the logical optimization phase, Samsara uses pattern matching to derive rewri
 
 Figure~\ref{fig:logicalplan-optimized} shows the final plan to execute produced by optimizing the original plan for our example code from Figure~\ref{fig:logicalplan}. The expression \texttt{OpAt $\rightarrow$ OpAx} which represents the computation of $X^\mathrm{T}y$ from the middle pipeline in~Figure~\ref{fig:logicalplan} is merged into the operator \texttt{OpAtx} in the optimized plan illustrated in Figure~\ref{fig:logicalplan-optimized}. The latter operator is a specialed implementation to compute a matrix transpose times vector multiplication in a single pass over the input. The next expression that gets optimized is \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAt $\rightarrow$ OpAB $\leftarrow$ OpCbindScalar $\leftarrow$ OpMapBlock}. This expression represents the part of the code that slices out $X$ from the input matrix and subsequently computes $X^\mathrm{T}X$. This expression is rewritten in two steps: first, the partial expression \texttt{OpAt $\rightarrow$ OpAB} is merged to \texttt{OpAtB}, so that the full expression becomes \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAtB $\leftarrow$ OpCbindScalar $\leftarrow$ OpMapBlock}. Second, we recognize that both of the inputs to \texttt{OpAtB} refer to same matrix, which allows us to replace \texttt{OpAtB} with a special operator \texttt{OpAtA} for transpose-times-self matrix multiplications. This saves us from having to compute the result of \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAt}, and shrinks the resulting DAG down to \texttt{OpMapBlock $\rightarrow$ OpCbindScalar $\rightarrow$ OpAtA}.
 
-TODO discuss caching via \texttt{checkpoint()}. Explain why optimizer cannot decide this.
+TODO discuss caching via \texttt{checkpoint()}. Explain why optimizer cannot decide this. Reference figure~\ref{fig:logicalplan-optimized-caching}
 
 \subsubsection{Physical Optimization}
 
@@ -200,7 +203,7 @@ The second physical operator \texttt{AtA\_slim} assumes that we can fit as many 
 
 \section{Related Work}
 
-{\em SystemML} \cite{Ghoting2011} - lightweight DSL instead of custom language (easier integration of external code), user decides on placement of matrices (e.g. in-core or in cluster), greatly simplifies the optimization. However, only non-holistic, non-cost-based optimization possible in Samsara, in contrast to~\cite{Boehm2014}
+{\em SystemML} \cite{Ghoting2011} - lightweight DSL instead of custom language (easier integration of external code), user decides on placement of matrices (e.g. in-core or in cluster), greatly simplifies the optimization. However, only non-holistic, non-cost-based optimization possible in Samsara, in contrast to~\cite{Boehm2014}; also different blocking of matrices.
 
 {\em SparkR} https://spark.apache.org/docs/latest/sparkr.html
 
@@ -208,7 +211,7 @@ The second physical operator \texttt{AtA\_slim} assumes that we can fit as many 
 
 {\em Matrix Computations in Spark} \cite{Zadeh2016}
 
-\section{Experimental Evaluation}
+\section{Experimental Evaluation}\label{sec:experiments}
 
 TODO: Show benefits of optimization for synthetically generated data, three flavors: no logical optimization, logical but not physical, logical plus physical
 
